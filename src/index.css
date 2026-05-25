@@ -312,3 +312,17 @@ select.md-input { resize: none; cursor: pointer; }
 .log-out     { color: var(--on-surface); }
 .log-err     { color: var(--warning); }
 .log-header  { color: var(--on-surface-v); font-weight: 600; }
+
+/* ── Model Select UI ── */
+.model-select-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.btn-small {
+  padding: 8px 12px;
+  font-size: 11.5px;
+  border-radius: var(--radius-xs);
+  height: 38px;
+  border: none;
+}

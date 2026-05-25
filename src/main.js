@@ -97,6 +97,19 @@ ipcMain.handle('dalvi:save-config', async (_e, { user, config }) => {
   return true;
 });
 
+// fetch live models
+ipcMain.handle('dalvi:fetch-models', async (_e, apiKey) => {
+  if (!apiKey || !apiKey.trim()) throw new Error('API key is required to fetch models');
+  const OpenAI = require('openai');
+  const client = new OpenAI({ apiKey: apiKey.trim() });
+  const response = await client.models.list();
+  const chatModels = response.data
+    .map(m => m.id)
+    .filter(id => id.startsWith('gpt') || id.startsWith('o1') || id.startsWith('o3') || id.startsWith('chatgpt'))
+    .sort();
+  return chatModels;
+});
+
 // pick & parse PDF  +  AI auto-extract keywords / goal
 ipcMain.handle('dalvi:upload-pdf', async (_e, user = 'default') => {
   const result = await dialog.showOpenDialog(mainWindow, {
@@ -144,12 +157,14 @@ ipcMain.handle('dalvi:upload-pdf', async (_e, user = 'default') => {
   let aiSuggestions = null;
   try {
     let fileApiKey = '';
+    let fileModel = '';
     const configPath = path.join(dir, 'config.json');
     if (fs.existsSync(configPath)) {
       try {
         const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        if (config && config.openaiApiKey) {
-          fileApiKey = config.openaiApiKey.trim();
+        if (config) {
+          if (config.openaiApiKey) fileApiKey = config.openaiApiKey.trim();
+          if (config.openaiModel) fileModel = config.openaiModel.trim();
         }
       } catch (err) {}
     }
@@ -162,7 +177,7 @@ ipcMain.handle('dalvi:upload-pdf', async (_e, user = 'default') => {
       send('bot:log', { type: 'info', text: '🤖 AI is analysing your resume…' });
       const OpenAI = require('openai');
       const client = new OpenAI({ apiKey });
-      const model  = (process.env.OPENAI_MODEL || 'gpt-5.4').trim();
+      const model  = (process.env.OPENAI_MODEL || fileModel || 'gpt-5.4').trim();
 
       const prompt = `
 You are a career assistant. Read the resume below and extract job search data.

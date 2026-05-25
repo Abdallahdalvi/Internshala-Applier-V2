@@ -17,6 +17,8 @@ const resumeNameEl = $('resume-name');
 
 const minSalary    = $('min-salary');
 const openaiApiKey = $('openai-api-key');
+const openaiModel  = $('openai-model');
+const fetchModelsBtn = $('fetch-models-btn');
 const locationInput = $('location');
 const wfhCheck     = $('wfh-check');
 const partTimeCheck = $('part-time-check');
@@ -42,6 +44,14 @@ async function loadConfig() {
     if (!cfg) return;
     minSalary.value       = cfg.minSalary || 300000;
     openaiApiKey.value    = cfg.openaiApiKey || '';
+    const modelVal = cfg.openaiModel || 'gpt-5.4';
+    if (!Array.from(openaiModel.options).some(o => o.value === modelVal)) {
+      const opt = document.createElement('option');
+      opt.value = modelVal;
+      opt.textContent = modelVal;
+      openaiModel.appendChild(opt);
+    }
+    openaiModel.value = modelVal;
     locationInput.value   = (cfg.location || '').toLowerCase();
     wfhCheck.checked      = cfg.workFromHome || false;
     partTimeCheck.checked = cfg.partTime || false;
@@ -160,6 +170,7 @@ function buildConfig() {
   return {
     minSalary:             salary,
     openaiApiKey:          openaiApiKey.value.trim(),
+    openaiModel:           openaiModel.value,
     location:              locationInput.value,
     workFromHome:          wfhCheck.checked,
     partTime:              partTimeCheck.checked,
@@ -256,6 +267,41 @@ browserBtn.addEventListener('click', () => {
 // ── Clear Terminal ───────────────────────────────────────────
 clearBtn.addEventListener('click', () => {
   terminal.innerHTML = '<div class="log-line log-info">Terminal cleared.</div>';
+});
+
+// ── Fetch OpenAI Models ──────────────────────────────────────
+fetchModelsBtn.addEventListener('click', async () => {
+  const key = openaiApiKey.value.trim();
+  if (!key) {
+    log('⚠ Please enter an OpenAI API Key first.', 'warn');
+    return;
+  }
+  
+  fetchModelsBtn.disabled = true;
+  fetchModelsBtn.textContent = '⏳ ...';
+  log('🔄 Fetching live models from OpenAI...', 'info');
+  
+  try {
+    const list = await window.dalvi.fetchModels(key);
+    if (list && list.length > 0) {
+      // Clear existing options
+      openaiModel.innerHTML = '';
+      list.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        openaiModel.appendChild(opt);
+      });
+      log(`✅ Successfully loaded ${list.length} chat models from OpenAI`, 'success');
+    } else {
+      log('⚠ No chat models found in response.', 'warn');
+    }
+  } catch (e) {
+    log('❌ Failed to fetch models: ' + e.message, 'error');
+  } finally {
+    fetchModelsBtn.disabled = false;
+    fetchModelsBtn.textContent = '🔄 Fetch';
+  }
 });
 
 // ── Helpers ──────────────────────────────────────────────────

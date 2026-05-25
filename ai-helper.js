@@ -28,11 +28,13 @@ const user = process.env.DALVI_USER || "default";
 const configPath = path.join(__dirname, "users", user, "config.json");
 
 let fileApiKey = null;
+let fileModel = null;
 if (fs.existsSync(configPath)) {
   try {
     const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    if (config && config.openaiApiKey) {
-      fileApiKey = config.openaiApiKey.trim();
+    if (config) {
+      if (config.openaiApiKey) fileApiKey = config.openaiApiKey.trim();
+      if (config.openaiModel) fileModel = config.openaiModel.trim();
     }
   } catch (err) {}
 }
@@ -48,8 +50,8 @@ const AI_AVAILABLE = Boolean(
 
 /* ── Model selection ──────────────────────────────────────── */
 // gpt-5.4 = latest confirmed OpenAI model (May 2026).
-// Override via OPENAI_MODEL in .env.
-const MODEL = (process.env.OPENAI_MODEL || "gpt-5.4").trim();
+// Override via OPENAI_MODEL in .env or the config.
+const MODEL = (process.env.OPENAI_MODEL || fileModel || "gpt-5.4").trim();
 
 /* ── Log status once at startup ───────────────────────────── */
 if (AI_AVAILABLE) {
