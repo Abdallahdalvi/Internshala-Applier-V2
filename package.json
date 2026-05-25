@@ -1,6 +1,6 @@
 {
-  "name": "dalvi",
-  "productName": "dalvi",
+  "name": "dalvi-internshala-applier-v2",
+  "productName": "Dalvi Internshala Applier V2",
   "version": "1.0.0",
   "description": "My Electron application description",
   "main": ".webpack/main",

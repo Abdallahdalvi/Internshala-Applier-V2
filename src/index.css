@@ -54,8 +54,15 @@ body {
   border-bottom: 1px solid var(--outline);
   flex-shrink: 0;
 }
-.appbar-left { display: flex; align-items: center; gap: 8px; }
+.appbar-left { display: flex; align-items: center; gap: 10px; }
 .appbar-icon { font-size: 22px; }
+.appbar-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--outline);
+}
 .appbar-title { font-size: 20px; font-weight: 700; color: var(--primary); letter-spacing: -0.3px; }
 .appbar-subtitle { font-size: 13px; color: var(--on-surface-v); }
 .appbar-right { display: flex; align-items: center; gap: 10px; }

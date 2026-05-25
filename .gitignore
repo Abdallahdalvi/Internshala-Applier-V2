@@ -12,6 +12,7 @@ out/
 # Logs and HTML dumps
 *.log
 *.html
+!src/index.html
 
 # Personal user data (contains OpenAI keys, resumes, and screenshots)
 users/

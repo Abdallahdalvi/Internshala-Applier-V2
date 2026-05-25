@@ -27,7 +27,7 @@ let currentProc  = null;
    PROJECT ROOT — resolves correctly even when webpack bundles
    main.js to .webpack/main/index.js
 ───────────────────────────────────────────────────────────── */
-const PROJECT_ROOT = process.cwd(); // electron-forge sets cwd to the project root
+const PROJECT_ROOT = app.getAppPath(); // resolves to resources/app when packaged
 
 /* ─────────────────────────────────────────────────────────────
    WINDOW CREATION
@@ -36,7 +36,7 @@ function createWindows() {
   // 1. Browser window – CREATED FIRST so Playwright's pages()[0] finds it
   browserWindow = new BrowserWindow({
     width: 1050, height: 780,
-    title: 'Dalvi – Internshala',
+    title: 'Dalvi Internshala Applier V2 - Browser',
     show: false,
     webPreferences: { nodeIntegration: false, contextIsolation: true },
   });
@@ -46,7 +46,7 @@ function createWindows() {
   // 2. Control panel
   mainWindow = new BrowserWindow({
     width: 1420, height: 900, minWidth: 1100, minHeight: 700,
-    title: 'Dalvi – Control Panel',
+    title: 'Dalvi Internshala Applier V2',
     backgroundColor: '#ffffff',
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
@@ -287,7 +287,12 @@ function runPipeline(steps, user = 'default') {
     const step = steps[i];
     send('bot:log', { type: 'header', text: `\n${'─'.repeat(40)}\n${step.label}\n${'─'.repeat(40)}\n` });
 
-    const proc = spawn('node', step.args, { cwd, env, shell: true });
+    const electronPath = process.execPath;
+    const proc = spawn(electronPath, step.args, {
+      cwd,
+      env: { ...env, ELECTRON_RUN_AS_NODE: '1' },
+      shell: true
+    });
     currentProc = proc;
 
     proc.stdout.on('data', d => send('bot:log', { type: 'out', text: d.toString() }));
