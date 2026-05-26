@@ -32,7 +32,7 @@ const USER_DIR = path.join(__dirname, "../users", user);
 const RESUME_PATH = path.join(USER_DIR, "resume.txt");
 const CONFIG_PATH = path.join(USER_DIR, "config.json");
 
-const MAX_APPLIES_PER_RUN = 100;
+// No apply limit — bot runs through the entire filtered queue
 
 /* ── Stats ───────────────────────────────────────────────── */
 const stats = {
@@ -470,115 +470,134 @@ async function smartFillForm(page, job) {
     }, el);
   }
 
-  /* ── TEXTAREAS ──────────────────────────────────────────── */
+  /* ── 1. GATHER ALL UNFILLED TEXT-LIKE FIELDS ──────────────── */
+  const textFields = [];
+
+  // 1a. Textareas
   const textareas = await page.$$("textarea");
   for (const el of textareas) {
     if (!(await el.isVisible())) continue;
-    if ((await el.inputValue()).trim()) continue;   // already filled
-
+    if ((await el.inputValue()).trim()) continue; // already filled
     const question = await getQuestionText(el);
-    console.log(`   📝 Q: "${question.substring(0, 80)}..." → `, 'classifying...');
-
-    const type   = classifyQuestion(question);
-    const answer = await getAnswer({
-      question, type,
-      job: { ...job, jdText },
-      resume, goal, profile
-    });
-
-    if (answer !== null && answer !== undefined && answer !== "" && answer !== "NOT_SURE") {
-      await el.fill(String(answer));
-      console.log(`      ✅ Answered (${type}): "${String(answer).substring(0, 60)}..."`);
-      await page.waitForTimeout(2000); // 2s delay after filling textarea
-    } else {
-      console.log(`      ⚠ No answer for type: ${type}`);
-    }
+    const type = classifyQuestion(question);
+    textFields.push({ el, question, type, tagName: "textarea" });
   }
 
-  /* ── CONTENTEDITABLE DIVS ───────────────────────────────── */
+  // 1b. Contenteditable divs
   const editableDivs = await page.$$("[contenteditable='true']");
   for (const el of editableDivs) {
     if (!(await el.isVisible())) continue;
-
     const existing = await el.innerText();
-    if (existing && existing.trim().length > 10) continue;  // already filled
-
+    if (existing && existing.trim().length > 10) continue; // already filled
     const question = await getQuestionText(el);
-    console.log(`   📝 Q (editable): "${question.substring(0, 80)}..."`);
-
-    const type   = classifyQuestion(question);
-    const answer = await getAnswer({
-      question, type,
-      job: { ...job, jdText },
-      resume, goal, profile
-    });
-
-    if (answer !== null && answer !== undefined && answer !== "" && answer !== "NOT_SURE") {
-      await el.click();
-      await page.waitForTimeout(2000); // Let focus transition complete (2s delay)
-      await el.evaluate((node, value) => {
-        node.innerText = value;
-        node.dispatchEvent(new Event("input", { bubbles: true }));
-      }, answer);
-      console.log(`      ✅ Answered (${type})`);
-      await page.waitForTimeout(2000); // Stabilization wait after editing (2s delay)
-    }
+    const type = classifyQuestion(question);
+    textFields.push({ el, question, type, tagName: "contenteditable" });
   }
 
-  /* ── TEXT INPUTS ────────────────────────────────────────── */
+  // 1c. Text inputs
   const inputs = await page.$$("input");
   for (const el of inputs) {
     if (!(await el.isVisible())) continue;
-
     const t = (await el.getAttribute("type")) || "text";
     if (["radio", "checkbox", "file", "hidden", "submit", "button"].includes(t)) continue;
-    if ((await el.inputValue()).trim()) continue;
-
+    if ((await el.inputValue()).trim()) continue; // already filled
     const question = await getQuestionText(el);
+    const type = classifyQuestion(question);
+    textFields.push({ el, question, type, tagName: "input", inputType: t });
+  }
 
-    const type   = classifyQuestion(question);
-    const answer = await getAnswer({
-      question, type,
-      job: { ...job, jdText },
-      resume, goal, profile
+  /* ── 2. ANSWER ALL TEXT FIELDS IN A SINGLE BATCH CALL ─────── */
+  let answersMap = {};
+  if (textFields.length > 0) {
+    console.log(`   📝 Scraped ${textFields.length} text fields. Requesting batch answers via AI...`);
+    const questionsForAI = textFields.map((tf, index) => ({
+      id: index,
+      question: tf.question,
+      type: tf.type
+    }));
+
+    const { askAIBatch } = require("../ai-helper");
+    answersMap = await askAIBatch({
+      questions: questionsForAI,
+      jd: jdText,
+      resume,
+      company: job.company,
+      role: job.title,
+      goal,
+      profile
     });
+  }
+
+  /* ── 3. FILL THE FIELDS SEQUENTIALLY ──────────────────────── */
+  for (const [index, tf] of textFields.entries()) {
+    let answer = answersMap[String(index)];
+
+    // Fallback to single getAnswer if batch answer is missing/invalid
+    if (answer === undefined || answer === null || answer === "" || answer === "NOT_SURE") {
+      console.log(`      ⚠ No batch answer for: "${tf.question.substring(0, 40)}...". Falling back to individual generation...`);
+      answer = await getAnswer({
+        question: tf.question,
+        type: tf.type,
+        job: { ...job, jdText },
+        resume,
+        goal,
+        profile
+      });
+    }
 
     if (answer !== null && answer !== undefined && answer !== "" && answer !== "NOT_SURE") {
-      let finalVal = String(answer);
-      if (t === "number") {
-        finalVal = finalVal.replace(/[^\d]/g, '');
-        if (!finalVal) {
-          // If it's a number field but the response wasn't numeric, try to see if we can use a fallback number
-          if (type === "salary" || type === "notice_period" || type === "joining_days" || type === "months_experience" || type === "experience") {
-            finalVal = "0";
-          } else {
-            // Otherwise skip this input to avoid throwing
-            continue;
+      if (tf.tagName === "textarea") {
+        await tf.el.fill(String(answer));
+        console.log(`      ✅ Textarea: "${tf.question.substring(0, 40)}..." → "${String(answer).substring(0, 50)}..."`);
+        await page.waitForTimeout(1000);
+      } else if (tf.tagName === "contenteditable") {
+        await tf.el.click();
+        await page.waitForTimeout(1000);
+        await tf.el.evaluate((node, value) => {
+          node.innerText = value;
+          node.dispatchEvent(new Event("input", { bubbles: true }));
+        }, String(answer));
+        console.log(`      ✅ Contenteditable: "${tf.question.substring(0, 40)}..."`);
+        await page.waitForTimeout(1000);
+      } else if (tf.tagName === "input") {
+        let finalVal = String(answer);
+        if (tf.inputType === "number") {
+          finalVal = finalVal.replace(/[^\d]/g, '');
+          if (!finalVal) {
+            if (["salary", "notice_period", "joining_days", "months_experience", "experience"].includes(tf.type)) {
+              finalVal = "0";
+            } else {
+              continue; // skip
+            }
+          }
+        }
+        await tf.el.fill(finalVal);
+        console.log(`      ✅ Input: "${tf.question.substring(0, 40)}..." → ${tf.type}: "${finalVal}"`);
+        await page.waitForTimeout(1000);
+
+        if (tf.type === "location") {
+          try {
+            await page.waitForTimeout(1500);
+            const suggestion = page.locator(".ui-menu-item, .ui-autocomplete li, [role='option'], .suggestion").first();
+            if (await suggestion.count() && await suggestion.isVisible()) {
+              await suggestion.click({ delay: 100 });
+              console.log("         ✅ Clicked city autocomplete suggestion");
+              await page.waitForTimeout(1000);
+            } else {
+              await tf.el.press("Enter");
+              await page.waitForTimeout(1000);
+            }
+          } catch (err) {
+            console.log(`         ⚠ City autocomplete error: ${err.message}`);
           }
         }
       }
-      await el.fill(finalVal);
-      console.log(`   📝 Input "${question.substring(0, 40)}..." → ${type}: "${finalVal.substring(0, 40)}"`);
-      await page.waitForTimeout(2000); // 2s delay after filling text input
-      
-      if (type === "location") {
-        try {
-          await page.waitForTimeout(2000); // Allow autocomplete options to populate (2s wait)
-          const suggestion = page.locator(".ui-menu-item, .ui-autocomplete li, [role='option'], .suggestion").first();
-          if (await suggestion.count() && await suggestion.isVisible()) {
-            await suggestion.click({ delay: 100 });
-            console.log("      ✅ Clicked city autocomplete suggestion");
-            await page.waitForTimeout(2000); // 2s animation/layout change wait
-          } else {
-            await el.press("Enter");
-            await page.waitForTimeout(2000); // 2s wait
-          }
-        } catch (err) {
-          console.log(`      ⚠ City autocomplete error: ${err.message}`);
-        }
-      }
+    } else {
+      console.log(`      ⚠ No answer generated for: "${tf.question.substring(0, 40)}..."`);
     }
   }
+
+  
 
   /* ── RADIO BUTTONS ──────────────────────────────────────── */
   try {
@@ -1036,7 +1055,7 @@ async function internshalaConfirmed(page) {
   const context = browser.contexts()[0];
   // Pick the Internshala page, not the webpack control panel
   const allPages = context.pages();
-  const page = allPages.find(p => !p.url().startsWith('http://localhost') && !p.url().startsWith('devtools://')) || allPages[0];
+  const page = allPages.find(p => !p.url().includes('main_window') && !p.url().startsWith('devtools://')) || allPages[0];
   console.log("✅  Connected");
 
   // Disable beforeunload handlers completely to prevent navigation aborts
@@ -1099,7 +1118,7 @@ async function internshalaConfirmed(page) {
   console.log(`📋  ${jobs.length} jobs in filtered queue`);
 
   for (const job of jobs) {
-    if (stats.applied >= MAX_APPLIES_PER_RUN) break;
+
 
     if (appliedJobs.has(job.id)) {
       stats.skipped_disk++;
