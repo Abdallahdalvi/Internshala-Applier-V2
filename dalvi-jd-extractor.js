@@ -6,7 +6,8 @@ const fs = require("fs");
 
   const browser = await chromium.connectOverCDP("http://localhost:9222");
   const context = browser.contexts()[0];
-  const page = context.pages()[0];
+  const allPages = context.pages();
+  const page = allPages.find(p => !p.url().includes('main_window') && !p.url().startsWith('devtools://')) || allPages[0];
 
   const jobQueue = [
     {

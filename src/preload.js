@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('dalvi', {
   toggleBrowser: ()             => ipcRenderer.invoke('dalvi:toggle-browser'),
   startBot:      (user)         => ipcRenderer.invoke('dalvi:start-bot', user),
   applyOnly:     (user)         => ipcRenderer.invoke('dalvi:apply-only', user),
+  buildProfile:  (user)         => ipcRenderer.invoke('dalvi:build-profile', user),
   stopBot:       ()             => ipcRenderer.invoke('dalvi:stop-bot'),
   fetchModels:   (apiKey)       => ipcRenderer.invoke('dalvi:fetch-models', apiKey),
 

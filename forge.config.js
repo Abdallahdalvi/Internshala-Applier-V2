@@ -7,6 +7,46 @@ module.exports = {
     icon: 'src/icon',
   },
   rebuildConfig: {},
+  hooks: {
+    packageAfterCopy: async (forgeConfig, buildPath, electronVersion, platform, arch) => {
+      const path = require('path');
+      const fs = require('fs');
+      const { execSync } = require('child_process');
+      
+      const itemsToCopy = [
+        'package.json',
+        'package-lock.json',
+        'prepare-user.js',
+        'dalvi-internshala-discovery.js',
+        'ai-helper.js',
+        'dalvi-ai.js',
+        'dalvi-controller.js',
+        'dalvi-jd-extractor.js',
+        'dalvi-job-runner.js',
+        'job-config.js',
+        'job-config-validator.js',
+        'job-schema.js',
+        'job-intent.json',
+        'ai',
+        'config',
+        'job-engine',
+        'resume-engine',
+        'src/icon.ico',
+        'src/logo.png'
+      ];
+      
+      for (const item of itemsToCopy) {
+        const srcPath = path.join(__dirname, item);
+        const destPath = path.join(buildPath, item);
+        if (fs.existsSync(srcPath)) {
+          fs.cpSync(srcPath, destPath, { recursive: true });
+        }
+      }
+
+      console.log('Installing production dependencies in build path:', buildPath);
+      execSync('npm install --omit=dev --no-audit --no-fund', { cwd: buildPath, stdio: 'inherit' });
+    }
+  },
   makers: [
     {
       name: '@electron-forge/maker-squirrel',

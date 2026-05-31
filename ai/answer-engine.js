@@ -24,59 +24,41 @@ const { askAI }           = require("../ai-helper");
 async function getAnswer({ question, type, job, resume, goal, profile }) {
 
   /* ── 1. RULE ENGINE for fast / structured answers ──────── */
-  const RULE_TYPES = [
-    "salary", "notice_period", "joining_days",
-    "location", "availability", "yes_no",
-    "rating", "months_experience"   // handled by bot — no AI needed
-  ];
-
-  if (RULE_TYPES.includes(type)) {
-    const ruleAnswer = ruleBasedAnswer({ question, type, profile });
-    if (ruleAnswer !== null && ruleAnswer !== undefined) {
-      return String(ruleAnswer);
-    }
+  const ruleAnswer = ruleBasedAnswer({ question, type, profile });
+  if (ruleAnswer !== null && ruleAnswer !== undefined) {
+    return String(ruleAnswer);
   }
 
-  /* ── 2. AI for explanatory / narrative answers ─────────── */
-  const AI_TYPES = ["explanation", "experience", "cover_letter"];
+  /* ── 2. AI FALLBACK for narrative / custom / unmatched answers ── */
+  const company = job.company || "the company";
+  const role    = job.title   || "the role";
 
-  if (AI_TYPES.includes(type)) {
-    const company = job.company || "the company";
-    const role    = job.title   || "the role";
+  // Determine the OpenAI field-type hint
+  let fieldType = "text";
+  if (type === "cover_letter")       fieldType = "cover_letter";
+  else if (type === "experience")     fieldType = "numeric";
+  else if (type === "rating")         fieldType = "short";
+  else if (type === "months_experience") fieldType = "numeric";
 
-    // Determine the OpenAI field-type hint
-    let fieldType;
-    if (type === "cover_letter")   fieldType = "cover_letter";
-    else if (type === "experience") fieldType = "short";
-    else if (type === "rating")     fieldType = "short";
-    else                            fieldType = "text";
+  /* ── 2a. Call OpenAI ──────────────────────────────────── */
+  const jd = job.jdText || job.jd || `${role} at ${company}`;
 
-    /* ── 2a. Call OpenAI ──────────────────────────────────── */
-    const jd = job.jdText || job.jd || `${role} at ${company}`;
+  const answer = await askAI({
+    question,
+    jd,
+    resume,
+    company,
+    role,
+    fieldType,
+    goal
+  });
 
-    const answer = await askAI({
-      question,
-      jd,
-      resume,
-      company,
-      role,
-      fieldType,
-      goal
-    });
-
-    /* ── AI unavailable (no key) → skip field cleanly ─────── */
-    if (answer === null) {
-      return "NOT_SURE"; // form-fill loop will skip this field
-    }
-
-    return String(answer);
+  /* ── AI unavailable (no key) → skip field cleanly ─────── */
+  if (answer === null) {
+    return "NOT_SURE"; // form-fill loop will skip this field
   }
 
-  /* ── 3. Fallback: try rule engine, else give up ─────────── */
-  const fallback = ruleBasedAnswer({ question, type, profile });
-  if (fallback !== null && fallback !== undefined) return String(fallback);
-
-  return "NOT_SURE";
+  return String(answer);
 }
 
 module.exports = { getAnswer };

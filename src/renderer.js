@@ -27,6 +27,7 @@ const allowedKw    = $('allowed-kw');
 const blockKw      = $('block-kw');
 const appGoal      = $('app-goal');
 const runBtn       = $('run-btn');
+const buildProfileBtn = $('build-profile-btn');
 const stopBtn      = $('stop-btn');
 const saveBtn      = $('save-btn');
 const clearBtn     = $('clear-btn');
@@ -35,6 +36,94 @@ const terminal     = $('terminal');
 const statusChip   = $('status-chip');
 const statusText   = $('status-text');
 const saveToast    = $('save-toast');
+
+function debounce(func, delay) {
+  let timeout;
+  return function(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), delay);
+  };
+}
+
+const autoSave = debounce(async () => {
+  if (!window.dalvi) return;
+  try {
+    const config = buildConfig();
+    await window.dalvi.saveConfig('default', config);
+    console.log('💾 Configuration auto-saved.');
+  } catch (e) {
+    log('❌ Auto-save failed: ' + e.message, 'error');
+  }
+}, 500);
+
+let lastFetchedKey = '';
+const autoFetchModels = debounce(async () => {
+  const key = openaiApiKey.value.trim();
+  if (!key || key === lastFetchedKey || key.length < 20) return;
+  lastFetchedKey = key;
+  
+  fetchModelsBtn.disabled = true;
+  fetchModelsBtn.textContent = '⏳ ...';
+  log('🔄 Auto-fetching live models from OpenAI...', 'info');
+  
+  try {
+    const list = await window.dalvi.fetchModels(key);
+    if (list && list.length > 0) {
+      const currentSelection = openaiModel.value;
+      openaiModel.innerHTML = '';
+      list.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = m;
+        openaiModel.appendChild(opt);
+      });
+      if (list.includes(currentSelection)) {
+        openaiModel.value = currentSelection;
+      } else {
+        const opt = document.createElement('option');
+        opt.value = currentSelection;
+        opt.textContent = currentSelection;
+        openaiModel.insertBefore(opt, openaiModel.firstChild);
+        openaiModel.value = currentSelection;
+      }
+      log(`✅ Successfully loaded ${list.length} chat models from OpenAI`, 'success');
+      autoSave();
+    }
+  } catch (e) {
+    log('❌ Auto-fetch models failed: ' + e.message, 'error');
+  } finally {
+    fetchModelsBtn.disabled = false;
+    fetchModelsBtn.textContent = '🔄 Fetch';
+  }
+}, 1000);
+
+// Attach auto-save event listeners to all settings inputs
+function initAutoSave() {
+  const settingsFields = [
+    minSalary,
+    openaiApiKey,
+    openaiModel,
+    locationInput,
+    wfhCheck,
+    partTimeCheck,
+    expRange,
+    allowedKw,
+    blockKw,
+    appGoal
+  ];
+
+  settingsFields.forEach(field => {
+    const eventType = (field.tagName === 'SELECT' || field.type === 'checkbox') ? 'change' : 'input';
+    field.addEventListener(eventType, () => {
+      autoSave();
+    });
+  });
+
+  // Also trigger auto-fetch on api key input
+  openaiApiKey.addEventListener('input', () => {
+    autoFetchModels();
+  });
+}
 
 // ── Load config on startup ───────────────────────────────────
 async function loadConfig() {
@@ -63,7 +152,17 @@ async function loadConfig() {
     log('⚠ Could not load config: ' + e.message, 'warn');
   }
 }
-loadConfig();
+loadConfig().then(() => {
+  initAutoSave();
+});
+
+// Listen for log output continuously
+if (window.dalvi) {
+  window.dalvi.onLog(({ type, text }) => {
+    log(text, type);
+    parseStats(text);
+  });
+}
 
 // ── PDF Upload ───────────────────────────────────────────────
 dropZone.addEventListener('click', handleUpload);
@@ -83,6 +182,14 @@ dropZone.addEventListener('drop', e => {
 
 async function handleUpload() {
   try {
+    // Auto-save the config first to ensure the API key is written to config.json
+    try {
+      const config = buildConfig();
+      await window.dalvi.saveConfig('default', config);
+    } catch (e) {
+      /* ignore save error */
+    }
+
     const result = await window.dalvi.uploadPdf('default');
     if (!result) return;
 
@@ -123,6 +230,7 @@ async function handleUpload() {
       if (ai.expectedSalary?.yearly) {
         minSalary.value = ai.expectedSalary.yearly;
       }
+      autoSave();
     } else {
       log('   Preview: ' + result.preview.slice(0, 100) + '…', 'out');
     }
@@ -228,8 +336,11 @@ async function launchBot(mode) {
   if (mode === 'apply') {
     log('\n🚀 Applying to saved jobs…\n', 'info');
     res = await window.dalvi.applyOnly('default');
+  } else if (mode === 'build_profile') {
+    log('\n👤 Building Internshala profile from resume…\n', 'info');
+    res = await window.dalvi.buildProfile('default');
   } else {
-    log('\n⚡ Starting full Dalvi pipeline…\n', 'info');
+    log('\n⚡ Starting full application pipeline…\n', 'info');
     res = await window.dalvi.startBot('default');
   }
 
@@ -242,6 +353,9 @@ async function launchBot(mode) {
 
 // ── Run Bot (full pipeline) ─────────────────────────────────
 runBtn.addEventListener('click', () => launchBot('full'));
+
+// ── Build Profile ──────────────────────────────────────────
+buildProfileBtn.addEventListener('click', () => launchBot('build_profile'));
 
 // ── Apply Now (filter + apply only) ─────────────────────────
 const applyBtn = $('apply-btn');
@@ -309,6 +423,7 @@ function setStatus(state) {
   statusChip.className = 'chip chip-' + state;
   runBtn.disabled   = state === 'running';
   applyBtn.disabled = state === 'running';
+  buildProfileBtn.disabled = state === 'running';
   stopBtn.disabled  = state !== 'running';
 
   const labels = { idle: 'Idle', running: 'Running…', done: 'Complete', error: 'Error' };

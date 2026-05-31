@@ -288,7 +288,7 @@ async function applyFilters(page) {
   const browser = await chromium.connectOverCDP("http://localhost:9222");
   const context = browser.contexts()[0];
   const allPages = context.pages();
-  const page = allPages.find(p => !p.url().startsWith('http://localhost') && !p.url().startsWith('devtools://')) || allPages[0];
+  const page = allPages.find(p => !p.url().includes('main_window') && !p.url().startsWith('devtools://')) || allPages[0];
 
   console.log("✅ Connected\n");
 

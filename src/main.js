@@ -9,7 +9,8 @@
  * always have access to port 9222 — fixing the ECONNREFUSED bug permanently.
  */
 
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('node:path');
 const fs   = require('fs');
 const { spawn } = require('child_process');
@@ -33,11 +34,14 @@ const PROJECT_ROOT = app.getAppPath(); // resolves to resources/app when package
    WINDOW CREATION
 ───────────────────────────────────────────────────────────── */
 function createWindows() {
+  const iconPath = path.join(PROJECT_ROOT, 'src', 'icon.ico');
+
   // 1. Browser window – CREATED FIRST so Playwright's pages()[0] finds it
   browserWindow = new BrowserWindow({
     width: 1050, height: 780,
-    title: 'Dalvi Internshala Applier V2 - Browser',
+    title: 'Bron Job Applier - Browser',
     show: false,
+    icon: iconPath,
     webPreferences: { nodeIntegration: false, contextIsolation: true },
   });
   browserWindow.loadURL('https://www.internshala.com');
@@ -46,8 +50,9 @@ function createWindows() {
   // 2. Control panel
   mainWindow = new BrowserWindow({
     width: 1420, height: 900, minWidth: 1100, minHeight: 700,
-    title: 'Dalvi Internshala Applier V2',
+    title: 'Bron Job Applier',
     backgroundColor: '#ffffff',
+    icon: iconPath,
     webPreferences: {
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
       nodeIntegration: false,
@@ -64,6 +69,48 @@ function createWindows() {
 ───────────────────────────────────────────────────────────── */
 function userDir(user) {
   return path.join(PROJECT_ROOT, 'users', user || 'default');
+}
+
+async function extractTextFromImage(filePath, apiKey, model) {
+  const OpenAI = require('openai');
+  const client = new OpenAI({ apiKey });
+  const fs = require('fs');
+  const path = require('path');
+
+  const imageBuffer = fs.readFileSync(filePath);
+  const base64Image = imageBuffer.toString('base64');
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+
+  const prompt = `
+You are a document transcription assistant. Transcribe all readable text from the uploaded resume image verbatim. 
+Maintain the structure and section layout as much as possible. Do NOT summarize or add commentary. Just output the transcribed text.
+`.trim();
+
+  let visionModel = 'gpt-4o-mini';
+  if (model.includes('gpt-4o') || model.includes('gpt-5') || model.includes('o4')) {
+    visionModel = model;
+  }
+
+  const response = await client.chat.completions.create({
+    model: visionModel,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:${mimeType};base64,${base64Image}`
+            }
+          }
+        ]
+      }
+    ]
+  });
+
+  return response.choices[0].message.content.trim();
 }
 
 function send(channel, payload) {
@@ -93,7 +140,15 @@ ipcMain.handle('dalvi:get-config', async (_e, user = 'default') => {
 ipcMain.handle('dalvi:save-config', async (_e, { user, config }) => {
   const dir = userDir(user);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify(config, null, 2));
+  const p = path.join(dir, 'config.json');
+  let existing = {};
+  if (fs.existsSync(p)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(p, 'utf-8')) || {};
+    } catch (e) {}
+  }
+  const merged = { ...existing, ...config };
+  fs.writeFileSync(p, JSON.stringify(merged, null, 2));
   return true;
 });
 
@@ -112,43 +167,91 @@ ipcMain.handle('dalvi:fetch-models', async (_e, apiKey) => {
 
 // pick & parse PDF  +  AI auto-extract keywords / goal
 ipcMain.handle('dalvi:upload-pdf', async (_e, user = 'default') => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Select Resume PDF',
-    properties: ['openFile'],
-    filters: [{ name: 'PDF Files', extensions: ['pdf'] }],
-  });
-  if (result.canceled || !result.filePaths.length) return null;
-
-  // ⚠ Use the internal lib path — the top-level require('pdf-parse') has a
-  //   known side-effect that tries to open test/data/05-versions-space.pdf
-  const pdfParse = require('pdf-parse/lib/pdf-parse.js');
   const dir = userDir(user);
   fs.mkdirSync(dir, { recursive: true });
 
-  const buffer = fs.readFileSync(result.filePaths[0]);
-  fs.writeFileSync(path.join(dir, 'resume.pdf'), buffer);
+  // Load configuration & API Key first
+  let fileApiKey = '';
+  let fileModel = '';
+  const configPath = path.join(dir, 'config.json');
+  if (fs.existsSync(configPath)) {
+    try {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) || {};
+      fileApiKey = (config.openaiApiKey || '').trim();
+      fileModel = (config.openaiModel || '').trim();
+    } catch (err) {}
+  }
 
-  const data = await pdfParse(buffer);
-  let text = data.text.trim();
+  require('dotenv').config({ path: path.join(PROJECT_ROOT, '.env') });
+  const apiKey = (process.env.OPENAI_API_KEY || fileApiKey || '').trim();
+  const validKey = apiKey && apiKey !== 'sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+  const model  = (process.env.OPENAI_MODEL || fileModel || 'gpt-5.4').trim();
 
-  // Scan PDF binary buffer for hyperlinks (like LinkedIn and Canva/Google Drive portfolio)
-  try {
-    const binaryStr = buffer.toString('binary');
-    const matches = binaryStr.match(/https?:\/\/[^\s\)\(<>]+/g);
-    if (matches) {
-      const uniqueLinks = Array.from(new Set(matches));
-      const linkedin = uniqueLinks.find(l => l.includes('linkedin.com/in/'));
-      const portfolio = uniqueLinks.find(l => l.includes('canva.com/') || l.includes('drive.google.com/'));
-      
-      if (linkedin) {
-        text = text.replace(/LinkedIn\b/gi, `LinkedIn: ${linkedin}`);
-      }
-      if (portfolio) {
-        text = text.replace(/Portfolio\b/gi, `Portfolio: ${portfolio}`);
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select Resume PDF or Image',
+    properties: ['openFile'],
+    filters: [{ name: 'Resume Files', extensions: ['pdf', 'png', 'jpg', 'jpeg'] }],
+  });
+  if (result.canceled || !result.filePaths.length) return null;
+
+  const filePath = result.filePaths[0];
+  const ext = path.extname(filePath).toLowerCase();
+  let text = '';
+
+  if (ext === '.pdf') {
+    const buffer = fs.readFileSync(filePath);
+    fs.writeFileSync(path.join(dir, 'resume.pdf'), buffer);
+
+    // Delete any old image resumes so they aren't used stale
+    for (const imgExt of ['.png', '.jpg', '.jpeg']) {
+      const imgP = path.join(dir, `resume${imgExt}`);
+      if (fs.existsSync(imgP)) {
+        try { fs.unlinkSync(imgP); } catch (e) {}
       }
     }
-  } catch (err) {
-    console.warn("Could not scan binary links:", err.message);
+
+    const pdfParse = require('pdf-parse/lib/pdf-parse.js');
+    const data = await pdfParse(buffer);
+    text = data.text.trim();
+
+    if (text.length < 50) {
+      throw new Error("This PDF has no readable text. Since it's scanned, please upload the original PNG/JPG image of the resume directly!");
+    }
+
+    // Scan PDF binary buffer for hyperlinks (like LinkedIn and Canva/Google Drive portfolio)
+    try {
+      const binaryStr = buffer.toString('binary');
+      const matches = binaryStr.match(/https?:\/\/[^\s\)\(<>]+/g);
+      if (matches) {
+        const uniqueLinks = Array.from(new Set(matches));
+        const linkedin = uniqueLinks.find(l => l.includes('linkedin.com/in/'));
+        const portfolio = uniqueLinks.find(l => l.includes('canva.com/') || l.includes('drive.google.com/'));
+        
+        if (linkedin) {
+          text = text.replace(/LinkedIn\b/gi, `LinkedIn: ${linkedin}`);
+        }
+        if (portfolio) {
+          text = text.replace(/Portfolio\b/gi, `Portfolio: ${portfolio}`);
+        }
+      }
+    } catch (err) {
+      console.warn("Could not scan binary links:", err.message);
+    }
+  } else if (['.png', '.jpg', '.jpeg'].includes(ext)) {
+    if (!validKey) {
+      throw new Error("An image-based resume requires an OpenAI API Key for transcription. Please configure your API key in settings first.");
+    }
+    const buffer = fs.readFileSync(filePath);
+    fs.writeFileSync(path.join(dir, `resume${ext}`), buffer);
+
+    // Delete any old PDF resumes so they aren't used stale
+    const pdfP = path.join(dir, 'resume.pdf');
+    if (fs.existsSync(pdfP)) {
+      try { fs.unlinkSync(pdfP); } catch (e) {}
+    }
+
+    send('bot:log', { type: 'info', text: '📷 Scanned/Image resume detected. Transcribing text using OpenAI Vision…' });
+    text = await extractTextFromImage(filePath, apiKey, model);
   }
 
   fs.writeFileSync(path.join(dir, 'resume.txt'), text);
@@ -156,28 +259,10 @@ ipcMain.handle('dalvi:upload-pdf', async (_e, user = 'default') => {
   // ── AI: auto-extract keywords + goal + profile from resume ─
   let aiSuggestions = null;
   try {
-    let fileApiKey = '';
-    let fileModel = '';
-    const configPath = path.join(dir, 'config.json');
-    if (fs.existsSync(configPath)) {
-      try {
-        const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        if (config) {
-          if (config.openaiApiKey) fileApiKey = config.openaiApiKey.trim();
-          if (config.openaiModel) fileModel = config.openaiModel.trim();
-        }
-      } catch (err) {}
-    }
-
-    require('dotenv').config({ path: path.join(PROJECT_ROOT, '.env') });
-    const apiKey = (process.env.OPENAI_API_KEY || fileApiKey || '').trim();
-    const validKey = apiKey && apiKey !== 'sk-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
-
     if (validKey) {
       send('bot:log', { type: 'info', text: '🤖 AI is analysing your resume…' });
       const OpenAI = require('openai');
       const client = new OpenAI({ apiKey });
-      const model  = (process.env.OPENAI_MODEL || fileModel || 'gpt-5.4').trim();
 
       const prompt = `
 You are a career assistant. Read the resume below and extract job search data.
@@ -209,12 +294,15 @@ ${text.slice(0, 4000)}
         ? { max_completion_tokens: 400 }
         : { max_tokens: 400 };
 
-      const resp = await client.chat.completions.create({
+      const requestParams = {
         model,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
         ...tokenParam,
-      });
+      };
+      if (!model.startsWith('gpt-5') && !model.startsWith('o')) {
+        requestParams.temperature = 0.3;
+      }
+      const resp = await client.chat.completions.create(requestParams);
 
       const raw = resp.choices[0].message.content.trim();
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -287,7 +375,7 @@ function runPipeline(steps, user = 'default') {
     const step = steps[i];
     send('bot:log', { type: 'header', text: `\n${'─'.repeat(40)}\n${step.label}\n${'─'.repeat(40)}\n` });
 
-    const electronPath = process.execPath;
+    const electronPath = `"${process.execPath}"`;
     const proc = spawn(electronPath, step.args, {
       cwd,
       env: { ...env, ELECTRON_RUN_AS_NODE: '1' },
@@ -318,6 +406,14 @@ ipcMain.handle('dalvi:start-bot', async (_e, user = 'default') => {
     { label: '🔍  Discover', args: ['dalvi-internshala-discovery.js'] },
     { label: '🧹  Filter',   args: ['job-engine/job-filter.js'] },
     { label: '🚀  Apply',    args: ['job-engine/internshala-auto-apply.js'] },
+  ], user);
+});
+
+// build profile: Prepare → Build Profile
+ipcMain.handle('dalvi:build-profile', async (_e, user = 'default') => {
+  return runPipeline([
+    { label: '⚙️  Prepare', args: ['prepare-user.js'] },
+    { label: '👤  Build Profile', args: ['job-engine/internshala-profile-builder.js'] },
   ], user);
 });
 
@@ -361,6 +457,7 @@ ipcMain.handle('dalvi:stop-bot', async () => {
    APP LIFECYCLE
 ───────────────────────────────────────────────────────────── */
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   createWindows();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindows(); });
 });

@@ -260,6 +260,9 @@ select.md-input { resize: none; cursor: pointer; }
 .md-btn-apply { background: #e6f4ea; color: #0d652d; border: 1px solid #a8dab5; }
 .md-btn-apply:not(:disabled):hover { background: #ceead6; }
 
+.md-btn-profile { background: #f3e8fd; color: #681da8; border: 1px solid #d7bdfb; }
+.md-btn-profile:not(:disabled):hover { background: #e8d0fb; }
+
 .btn-hint {
   font-size: 11px; color: #9aa0a6; text-align: center;
   margin: 0; padding: 0;

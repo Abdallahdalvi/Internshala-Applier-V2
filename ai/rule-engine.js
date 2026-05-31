@@ -46,14 +46,37 @@ function ruleBasedAnswer({ question, type, profile }) {
   /* EXPERIENCE */
   if (type === "experience") {
     const exp = profile.experienceYears;
-    if (!exp || typeof exp !== 'object') return "0";
+    let years = null;
     
-    if (q.includes("customer")) return exp.customer_support ?? 0;
-    if (q.includes("sales")) return exp.sales ?? 0;
-    if (q.includes("marketing")) return exp.digital_marketing ?? 0;
-    
-    const vals = Object.values(exp).filter(v => typeof v === 'number');
-    return vals.length > 0 ? Math.max(...vals) : 0;
+    if (exp && typeof exp === 'object') {
+      // 1. Try direct matching on keys
+      for (const key of Object.keys(exp)) {
+        const cleanKey = key.replace(/_/g, ' ').toLowerCase();
+        if (q.includes(cleanKey)) {
+          years = exp[key];
+          break;
+        }
+        const words = cleanKey.replace(/ing$/, '').split(' ');
+        if (words.every(w => q.includes(w))) {
+          years = exp[key];
+          break;
+        }
+      }
+
+      // 2. Pre-defined categories fallback
+      if (years === null) {
+        if (q.includes("customer") || q.includes("support")) years = exp.customer_support;
+        else if (q.includes("sales") || q.includes("business development") || q.includes("bd")) years = exp.sales;
+        else if (q.includes("marketing") || q.includes("digital")) years = exp.digital_marketing;
+      }
+    }
+
+    if (years !== null && years !== undefined) {
+      return String(years);
+    }
+
+    // Yield to AI to calculate years from resume
+    return null;
   }
 
   /* SALARY */
@@ -74,18 +97,37 @@ function ruleBasedAnswer({ question, type, profile }) {
   /* MONTHS OF EXPERIENCE — convert years to months */
   if (type === "months_experience") {
     const exp = profile.experienceYears;
-    let years = 0;
+    let years = null;
+    
     if (exp && typeof exp === 'object') {
-      if (q.includes("customer") || q.includes("support")) years = exp.customer_support ?? 0;
-      else if (q.includes("sales") || q.includes("business development") || q.includes("bd")) years = exp.sales ?? 0;
-      else if (q.includes("marketing") || q.includes("digital")) years = exp.digital_marketing ?? 0;
-      else {
-        const vals = Object.values(exp).filter(v => typeof v === 'number');
-        years = vals.length > 0 ? Math.max(...vals) : 0;
+      // 1. Try direct matching on keys
+      for (const key of Object.keys(exp)) {
+        const cleanKey = key.replace(/_/g, ' ').toLowerCase();
+        if (q.includes(cleanKey)) {
+          years = exp[key];
+          break;
+        }
+        const words = cleanKey.replace(/ing$/, '').split(' ');
+        if (words.every(w => q.includes(w))) {
+          years = exp[key];
+          break;
+        }
+      }
+
+      // 2. Pre-defined categories fallback
+      if (years === null) {
+        if (q.includes("customer") || q.includes("support")) years = exp.customer_support;
+        else if (q.includes("sales") || q.includes("business development") || q.includes("bd")) years = exp.sales;
+        else if (q.includes("marketing") || q.includes("digital")) years = exp.digital_marketing;
       }
     }
-    // Return months — at least 1 month even if years is 0, to avoid failing numeric-required fields
-    return Math.max(1, Math.round(years * 12));
+
+    if (years !== null && years !== undefined) {
+      return Math.max(1, Math.round(years * 12));
+    }
+
+    // Yield to AI to calculate years/months from resume
+    return null;
   }
 
 

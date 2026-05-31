@@ -14,7 +14,8 @@ const client = new OpenAI({
   // Connect to Dalvi
   const browser = await chromium.connectOverCDP("http://localhost:9222");
   const context = browser.contexts()[0];
-  const page = context.pages()[0];
+  const allPages = context.pages();
+  const page = allPages.find(p => !p.url().includes('main_window') && !p.url().startsWith('devtools://')) || allPages[0];
 
   // 1️⃣ Force navigation (do NOT assume state)
   await page.goto("https://www.google.com", {

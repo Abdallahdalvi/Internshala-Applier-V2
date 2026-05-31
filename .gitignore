@@ -30,3 +30,7 @@ job-queue*.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Releases
+releases/
+

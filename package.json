@@ -1,6 +1,6 @@
 {
-  "name": "dalvi-internshala-applier-v2",
-  "productName": "Dalvi Internshala Applier V2",
+  "name": "bron-job-applier",
+  "productName": "Bron Job Applier",
   "version": "1.0.0",
   "description": "My Electron application description",
   "main": ".webpack/main",

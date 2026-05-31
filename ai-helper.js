@@ -102,7 +102,9 @@ async function askAI({ question, jd, resume, company, role, fieldType, goal }) {
       ? "Write a professional cover letter (8–12 sentences, 3 paragraphs). Address it to the Hiring Manager at the specific company."
       : fieldType === "short"
         ? "Keep the answer concise (1–3 sentences or a single value)."
-        : "Write a focused, professional answer (3–5 sentences).";
+        : fieldType === "numeric"
+          ? "Output ONLY a single integer representing the number (digits only, e.g. 12 or 36). Do NOT write any letters, words, units, or punctuation. Just the digits."
+          : "Write a focused, professional answer (3–5 sentences).";
 
   const prompt = `
 You are an expert job application assistant helping a candidate apply to a role in May 2026.
@@ -148,12 +150,15 @@ INSTRUCTIONS
     ? { max_completion_tokens: maxTok }
     : { max_tokens: maxTok };
 
-  const response = await client.chat.completions.create({
+  const requestParams = {
     model: MODEL,
     messages: [{ role: "user", content: prompt }],
-    temperature: 0.35,
     ...tokenParam,
-  });
+  };
+  if (!MODEL.startsWith("gpt-5") && !MODEL.startsWith("o")) {
+    requestParams.temperature = 0.35;
+  }
+  const response = await client.chat.completions.create(requestParams);
 
   const raw = response.choices[0].message.content.trim();
   return sanitizeAnswer(raw);
@@ -176,4 +181,106 @@ function sanitizeAnswer(text) {
     .replace(/[^\x00-\x7F]/g, '');                   // strip any remaining non-ASCII
 }
 
-module.exports = { askAI, MODEL, AI_AVAILABLE };
+/**
+ * Scrape all questions, JD, resume, and profile, and answer them all in a single batch.
+ */
+async function askAIBatch({ questions, jd, resume, company, role, goal, profile }) {
+  if (!AI_AVAILABLE || !client) {
+    return {};
+  }
+
+  const today = new Date().toLocaleDateString("en-IN", {
+    year: "numeric", month: "long", day: "numeric"
+  });
+
+  const questionsListText = questions.map(q => {
+    return `${q.id}: "${q.question}" (type: ${q.type})`;
+  }).join('\n');
+
+  const prompt = `
+You are an expert job application assistant helping a candidate apply to a role in May 2026.
+
+════════════════════════════════════════════════
+CANDIDATE RESUME
+════════════════════════════════════════════════
+${resume}
+
+════════════════════════════════════════════════
+CANDIDATE SETTINGS, PREFERENCES & PROFILE
+════════════════════════════════════════════════
+- Target Location: ${profile.location || "mumbai"}
+- Expected Salary: ${profile.minSalary || 300000} LPA
+- Notice Period: ${profile.noticePeriodDays ?? 0} days
+- Availability: ${profile.availability || "Immediate"}
+- Target Goal: ${goal || "Apply for relevant roles using transferable skills."}
+- Skill Experience (years): ${JSON.stringify(profile.experienceYears || {})}
+
+════════════════════════════════════════════════
+JOB DESCRIPTION
+Company : ${company}
+Role    : ${role}
+Date    : ${today}
+
+${jd}
+
+════════════════════════════════════════════════
+QUESTIONS TO ANSWER
+${questionsListText}
+
+════════════════════════════════════════════════
+INSTRUCTIONS
+For each question listed above:
+1. Provide a professional, tailored, and accurate answer based on the CANDIDATE RESUME, SETTINGS, and JOB DESCRIPTION.
+2. Formats:
+   - For type "cover_letter": write 8-12 sentences.
+   - For type "months_experience": output ONLY a single integer representing months. Calculate this by reading the resume for the duration of the matching skills (e.g. 1 year = 12, 3 years = 36). If 0 or not found, output 0.
+   - For type "experience" (years of experience): output ONLY a single integer representing years (e.g. 3 or 1). If not found, output 0.
+   - For type "salary": output a clean number based on expected salary preferences (either monthly or yearly depending on the question context, e.g. 300000 or 25000).
+   - For type "location": output the candidate's preferred location (e.g. mumbai).
+   - For type "yes_no": answer with a polite positive statement (e.g. "Yes, I am comfortable with this").
+   - For other text/explanation questions: write a focused 2-3 sentence answer.
+3. Personalise specifically to "${company}" and "${role}". Do NOT use any other company name.
+4. Use ONLY plain ASCII characters. No smart quotes, curly quotes, en-dashes, or bullet points.
+5. Return the answers as a single JSON object mapping each question ID (as a string) to its corresponding answer string.
+Example format:
+{
+  "0": "answer text",
+  "1": "12",
+  "2": "300000"
+}
+
+Output ONLY the raw JSON object. Do not wrap it in markdown block backticks or add any other text.
+`.trim();
+
+  try {
+    const maxTok = Math.min(2000, 400 * questions.length + 300);
+    const tokenParam = MODEL.startsWith("gpt-5") || MODEL.startsWith("o")
+      ? { max_completion_tokens: maxTok }
+      : { max_tokens: maxTok };
+
+    const requestParams = {
+      model: MODEL,
+      messages: [{ role: "user", content: prompt }],
+      ...tokenParam,
+    };
+    if (!MODEL.startsWith("gpt-5") && !MODEL.startsWith("o")) {
+      requestParams.temperature = 0.35;
+    }
+    const response = await client.chat.completions.create(requestParams);
+
+    const raw = response.choices[0].message.content.trim();
+    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+    const rawData = JSON.parse(jsonMatch ? jsonMatch[0] : raw);
+
+    const sanitized = {};
+    for (const [key, value] of Object.entries(rawData)) {
+      sanitized[key] = sanitizeAnswer(String(value));
+    }
+    return sanitized;
+  } catch (err) {
+    console.error("   ⚠ OpenAI batch generation failed:", err.message);
+    return {};
+  }
+}
+
+module.exports = { askAI, askAIBatch, MODEL, AI_AVAILABLE };
